@@ -4,7 +4,7 @@ SyncAudio is a native Windows 11 audio-sharing utility under active development.
 
 ## Current status
 
-The repository contains the research and native audio-core foundation, actual MMDevice endpoint enumeration, and the first functional audio route. `syncaudio-cli` can list actual Windows render endpoints or explicitly mirror the default multimedia endpoint to one compatible output using event-driven WASAPI loopback. The current route is deliberately limited to two compatible Float32 shared-mode endpoints; format conversion, five-output fan-out, and the desktop UI are subsequent milestones and are not represented as completed features.
+The repository contains the research and native audio-core foundation, a native Windows dashboard, actual MMDevice endpoint enumeration, and functional WASAPI output routes. Double-click `SyncAudio.exe` to choose up to five active destination endpoints, adjust their real Windows endpoint volume/mute state, refresh their current connection state, and start isolated WASAPI loopback routes. The dashboard never invents device data or successful routing states.
 
 ## What is technically possible
 
@@ -25,6 +25,17 @@ The engine is C++20 with direct Core Audio/WASAPI calls, not a managed wrapper. 
 
 See [the architecture decision](docs/architecture/architecture-decision.md) and [Windows audio architecture](docs/research/windows-audio-architecture.md).
 
+## Dashboard use
+
+1. Open `SyncAudio.exe`.
+2. Check up to five active, non-default audio endpoints. The Windows default endpoint remains the system-audio source and cannot be selected as a destination.
+3. Select a row to use its real endpoint-volume slider or mute control.
+4. Select **START AUDIO SHARING**. Each destination is started in its own WASAPI worker so a failed device does not stop the rest.
+
+The dashboard reports a per-device error if the source and destination formats are not yet compatible. Its current renderer requires a matching Float32 shared-mode sample rate and channel count. Format adapters, shared-capture fan-out, and drift-controlled synchronization are active development work; the UI says this plainly rather than treating unrelated device clocks as synchronized.
+
+`SyncAudio-cli.exe` remains a diagnostics tool: it lists exact endpoint IDs and can exercise a single explicit mirror route.
+
 ## Build prerequisites
 
 - Windows 11 x64
@@ -38,13 +49,17 @@ cmake --build out/build --config Release
 .\out\build\Release\syncaudio-cli.exe
 ```
 
-The CLI only enumerates devices at this stage. It is safe to run: it does not start capture, open render streams, or alter endpoint configuration.
-
-To run a one-device mirror, list endpoints and copy the complete ID of a non-default device, then pass it explicitly. The optional duration defaults to 60 seconds. Ctrl+C stops the route and releases both WASAPI streams.
+To run the dashboard from a local build:
 
 ```powershell
-.\out\build\Release\syncaudio-cli.exe
-.\out\build\Release\syncaudio-cli.exe --mirror '<destination endpoint ID>' 60
+.\out\build\syncaudio-app.exe
+```
+
+To run a one-device CLI mirror, list endpoints and copy the complete ID of a non-default device, then pass it explicitly. The optional duration defaults to 60 seconds. Ctrl+C stops the route and releases both WASAPI streams.
+
+```powershell
+.\out\build\syncaudio-cli.exe
+.\out\build\syncaudio-cli.exe --mirror '<destination endpoint ID>' 60
 ```
 
 ## Planned milestones
