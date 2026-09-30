@@ -4,7 +4,7 @@ SyncAudio is a native Windows 11 audio-sharing utility under active development.
 
 ## Current status
 
-The repository currently contains the research and native audio-core foundation (Milestone 1 plus the first real device-management component). `syncaudio-cli` enumerates actual active render endpoints through the Windows MMDevice API; no device list is fabricated. Multi-device loopback rendering and the desktop UI are subsequent milestones and are not represented as completed features.
+The repository contains the research and native audio-core foundation, actual MMDevice endpoint enumeration, and the first functional audio route. `syncaudio-cli` can list actual Windows render endpoints or explicitly mirror the default multimedia endpoint to one compatible output using event-driven WASAPI loopback. The current route is deliberately limited to two compatible Float32 shared-mode endpoints; format conversion, five-output fan-out, and the desktop UI are subsequent milestones and are not represented as completed features.
 
 ## What is technically possible
 
@@ -40,6 +40,13 @@ cmake --build out/build --config Release
 
 The CLI only enumerates devices at this stage. It is safe to run: it does not start capture, open render streams, or alter endpoint configuration.
 
+To run a one-device mirror, list endpoints and copy the complete ID of a non-default device, then pass it explicitly. The optional duration defaults to 60 seconds. Ctrl+C stops the route and releases both WASAPI streams.
+
+```powershell
+.\out\build\Release\syncaudio-cli.exe
+.\out\build\Release\syncaudio-cli.exe --mirror '<destination endpoint ID>' 60
+```
+
 ## Planned milestones
 
 1. Research and API decision — complete.
@@ -55,4 +62,3 @@ No administrator privilege is required for the user-mode WASAPI design. System a
 ## License
 
 License selection is pending before external distribution. Third-party projects in the research document are studied for ideas only; no third-party source is incorporated.
-

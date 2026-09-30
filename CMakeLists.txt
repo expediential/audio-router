@@ -9,7 +9,9 @@ add_library(syncaudio-core
     audio-engine/include/syncaudio/core/device_descriptor.h
     audio-engine/include/syncaudio/core/ring_buffer.h
     audio-engine/include/syncaudio/core/sync_controller.h
+    audio-engine/include/syncaudio/core/wasapi_mirror.h
     audio-engine/src/device_enumerator.cpp
+    audio-engine/src/wasapi_mirror.cpp
     sync-engine/src/sync_controller.cpp)
 
 target_include_directories(syncaudio-core PUBLIC audio-engine/include)
