@@ -72,7 +72,7 @@ int wmain(int argc, wchar_t* argv[]) {
             return 2;
         }
         const auto devices = syncaudio::enumerate_render_endpoints();
-        std::wcout << L"SyncAudio — detected Windows render endpoints\n\n";
+        std::wcout << L"SyncAudio - detected Windows render endpoints\n\n";
         if (devices.empty()) {
             std::wcout << L"No render endpoints were returned by MMDevice. Check Windows Sound settings.\n";
         }

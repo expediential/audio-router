@@ -19,8 +19,13 @@ namespace {
 using Microsoft::WRL::ComPtr;
 
 [[noreturn]] void throw_hresult(std::wstring_view operation, HRESULT result) {
-    throw std::runtime_error(std::format("{} failed (HRESULT 0x{:08X})",
-                                         std::string(operation.begin(), operation.end()),
+    const int byte_count = WideCharToMultiByte(CP_UTF8, 0, operation.data(),
+                                               static_cast<int>(operation.size()),
+                                               nullptr, 0, nullptr, nullptr);
+    std::string operation_utf8(static_cast<std::size_t>(byte_count), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, operation.data(), static_cast<int>(operation.size()),
+                        operation_utf8.data(), byte_count, nullptr, nullptr);
+    throw std::runtime_error(std::format("{} failed (HRESULT 0x{:08X})", operation_utf8,
                                          static_cast<unsigned long>(result)));
 }
 

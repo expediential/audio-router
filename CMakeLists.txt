@@ -4,6 +4,9 @@ project(SyncAudio VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# Keep the distributable CLI independent of a separately installed Visual C++
+# runtime. Windows Core Audio itself remains provided by Windows.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_library(syncaudio-core
     audio-engine/include/syncaudio/core/device_descriptor.h
