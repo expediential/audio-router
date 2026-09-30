@@ -29,7 +29,7 @@ target_link_libraries(syncaudio-cli PRIVATE syncaudio-core)
 target_compile_options(syncaudio-cli PRIVATE /W4 /permissive- /EHsc)
 
 add_executable(syncaudio-app WIN32 app/win32/main.cpp)
-target_link_libraries(syncaudio-app PRIVATE syncaudio-core comctl32)
+target_link_libraries(syncaudio-app PRIVATE syncaudio-core comctl32 dwmapi uxtheme msimg32)
 target_compile_definitions(syncaudio-app PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(syncaudio-app PRIVATE /W4 /permissive- /EHsc)
 

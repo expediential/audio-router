@@ -4,7 +4,9 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <dwmapi.h>
 #include <objbase.h>
+#include <uxtheme.h>
 
 #include <algorithm>
 #include <atomic>
@@ -26,6 +28,13 @@ constexpr int id_start = 102;
 constexpr int id_stop = 103;
 constexpr int id_volume = 104;
 constexpr int id_mute = 105;
+
+constexpr COLORREF ink = RGB(238, 242, 250);
+constexpr COLORREF muted_ink = RGB(165, 177, 198);
+constexpr COLORREF canvas = RGB(10, 15, 25);
+constexpr COLORREF glass = RGB(25, 34, 51);
+constexpr COLORREF glass_highlight = RGB(35, 48, 70);
+constexpr COLORREF blue = RGB(98, 151, 255);
 
 class RouteWorker {
 public:
@@ -103,26 +112,28 @@ public:
 
     void resize(int width, int height) {
         const int margin = 28;
-        const int top = 112;
-        const int panel_width = (std::max)(330, width * 36 / 100);
+        const int top = 182;
+        const int panel_width = (std::max)(340, width * 35 / 100);
         const int list_width = width - panel_width - margin * 3;
-        const int content_height = (std::max)(320, height - top - 86);
-        MoveWindow(title_, margin, 22, width - margin * 2, 40, TRUE);
-        MoveWindow(subtitle_, margin, 59, width - margin * 2, 26, TRUE);
-        MoveWindow(list_label_, margin, top - 31, list_width, 24, TRUE);
-        MoveWindow(refresh_, margin + list_width - 104, top - 35, 104, 28, TRUE);
-        MoveWindow(list_, margin, top, list_width, content_height, TRUE);
+        const int content_height = (std::max)(280, height - top - 84);
+        MoveWindow(title_, margin + 26, 33, width - margin * 2 - 52, 40, TRUE);
+        MoveWindow(subtitle_, margin + 27, 75, width - margin * 2 - 54, 24, TRUE);
+        MoveWindow(group_summary_, width - margin - 236, 41, 205, 30, TRUE);
+        MoveWindow(group_hint_, margin + 27, 115, width - margin * 2 - 54, 24, TRUE);
+        MoveWindow(list_label_, margin + 22, top - 38, list_width - 44, 24, TRUE);
+        MoveWindow(refresh_, margin + list_width - 126, top - 43, 98, 30, TRUE);
+        MoveWindow(list_, margin + 18, top, list_width - 36, content_height - 18, TRUE);
         const int panel_x = margin * 2 + list_width;
-        MoveWindow(panel_title_, panel_x, top - 31, panel_width, 24, TRUE);
-        MoveWindow(selected_name_, panel_x, top + 12, panel_width, 48, TRUE);
-        MoveWindow(selected_detail_, panel_x, top + 65, panel_width, 42, TRUE);
-        MoveWindow(volume_label_, panel_x, top + 128, panel_width, 24, TRUE);
-        MoveWindow(volume_, panel_x, top + 156, panel_width, 34, TRUE);
-        MoveWindow(mute_, panel_x, top + 202, 110, 34, TRUE);
-        MoveWindow(start_, panel_x, top + 268, panel_width, 42, TRUE);
-        MoveWindow(stop_, panel_x, top + 320, panel_width, 34, TRUE);
-        MoveWindow(route_note_, panel_x, top + 374, panel_width, 88, TRUE);
-        MoveWindow(status_, margin, height - 45, width - margin * 2, 26, TRUE);
+        MoveWindow(panel_title_, panel_x + 24, top - 38, panel_width - 48, 24, TRUE);
+        MoveWindow(selected_name_, panel_x + 24, top + 14, panel_width - 48, 35, TRUE);
+        MoveWindow(selected_detail_, panel_x + 24, top + 56, panel_width - 48, 42, TRUE);
+        MoveWindow(volume_label_, panel_x + 24, top + 124, panel_width - 48, 24, TRUE);
+        MoveWindow(volume_, panel_x + 22, top + 151, panel_width - 44, 34, TRUE);
+        MoveWindow(mute_, panel_x + 24, top + 205, 118, 34, TRUE);
+        MoveWindow(start_, panel_x + 24, top + 270, panel_width - 48, 46, TRUE);
+        MoveWindow(stop_, panel_x + 24, top + 326, panel_width - 48, 34, TRUE);
+        MoveWindow(route_note_, panel_x + 24, top + 385, panel_width - 48, 78, TRUE);
+        MoveWindow(status_, margin + 24, height - 51, width - margin * 2 - 48, 25, TRUE);
     }
 
     void refresh_devices() {
@@ -147,6 +158,7 @@ public:
             }
         }
         update_selection_controls();
+        update_group_summary();
         set_status(L"Ready. Select up to five active destination devices.");
     }
 
@@ -175,6 +187,15 @@ public:
             if (change->uChanged & LVIF_STATE) {
                 enforce_selection(change->iItem);
                 update_selection_controls();
+                update_group_summary();
+            }
+        }
+        if (notification->code == NM_DBLCLK) {
+            const auto* activation = reinterpret_cast<NMITEMACTIVATE*>(notification);
+            if (activation->iItem >= 0 && activation->iItem < static_cast<int>(devices_.size())) {
+                ListView_SetCheckState(list_, activation->iItem, !ListView_GetCheckState(list_, activation->iItem));
+                enforce_selection(activation->iItem);
+                update_group_summary();
             }
         }
     }
@@ -184,47 +205,90 @@ public:
         if (ownership) set_status(*ownership);
     }
 
-    HBRUSH control_brush(HDC context, bool is_status) {
-        SetBkColor(context, is_status ? RGB(28, 37, 54) : RGB(20, 24, 31));
-        SetTextColor(context, is_status ? RGB(180, 213, 255) : RGB(232, 235, 241));
-        return is_status ? status_brush_ : background_brush_;
+    HBRUSH control_brush(HDC context) {
+        SetBkMode(context, TRANSPARENT);
+        SetTextColor(context, ink);
+        return reinterpret_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
     }
 
     void draw_button(const DRAWITEMSTRUCT& drawing) const {
         const bool pressed = (drawing.itemState & ODS_SELECTED) != 0;
         const bool disabled = (drawing.itemState & ODS_DISABLED) != 0;
-        const COLORREF fill = disabled ? RGB(54, 60, 70) :
-                              (drawing.CtlID == id_start ? (pressed ? RGB(37, 100, 196) : RGB(54, 126, 234))
-                                                          : (pressed ? RGB(49, 56, 69) : RGB(39, 45, 56)));
+        const COLORREF fill = disabled ? RGB(55, 63, 78) :
+                              (drawing.CtlID == id_start ? (pressed ? RGB(58, 111, 211) : blue)
+                                                          : (pressed ? RGB(50, 61, 80) : RGB(38, 48, 66)));
         HBRUSH brush = CreateSolidBrush(fill);
-        FillRect(drawing.hDC, &drawing.rcItem, brush);
+        HPEN border = CreatePen(PS_SOLID, 1, disabled ? RGB(63, 71, 86) : RGB(99, 118, 148));
+        HGDIOBJ old_pen = SelectObject(drawing.hDC, border);
+        HGDIOBJ old_brush = SelectObject(drawing.hDC, brush);
+        RoundRect(drawing.hDC, drawing.rcItem.left, drawing.rcItem.top, drawing.rcItem.right, drawing.rcItem.bottom, 16, 16);
+        SelectObject(drawing.hDC, old_brush);
+        SelectObject(drawing.hDC, old_pen);
         DeleteObject(brush);
+        DeleteObject(border);
         SetBkMode(drawing.hDC, TRANSPARENT);
         SetTextColor(drawing.hDC, disabled ? RGB(140, 145, 154) : RGB(245, 247, 251));
         SelectObject(drawing.hDC, body_font_);
         wchar_t text[64]{};
         GetWindowTextW(drawing.hwndItem, text, static_cast<int>(std::size(text)));
-        DrawTextW(drawing.hDC, text, -1, const_cast<RECT*>(&drawing.rcItem), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        RECT text_rect = drawing.rcItem;
+        if (drawing.CtlID == id_start) {
+            const int center_y = (drawing.rcItem.top + drawing.rcItem.bottom) / 2;
+            POINT play[] = {{drawing.rcItem.left + 21, center_y - 7}, {drawing.rcItem.left + 21, center_y + 7}, {drawing.rcItem.left + 33, center_y}};
+            HBRUSH icon = CreateSolidBrush(RGB(255, 255, 255));
+            HPEN none = CreatePen(PS_NULL, 0, RGB(0, 0, 0));
+            SelectObject(drawing.hDC, icon); SelectObject(drawing.hDC, none); Polygon(drawing.hDC, play, 3);
+            DeleteObject(icon); DeleteObject(none);
+            text_rect.left += 14;
+        }
+        DrawTextW(drawing.hDC, text, -1, &text_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    void paint(HDC context) const {
+        RECT client{}; GetClientRect(window_, &client);
+        HBRUSH base = CreateSolidBrush(canvas); FillRect(context, &client, base); DeleteObject(base);
+        const int width = client.right;
+        const int height = client.bottom;
+        const int margin = 28;
+        const int top = 182;
+        const int panel_width = (std::max)(340, width * 35 / 100);
+        const int list_width = width - panel_width - margin * 3;
+        draw_glass_panel(context, {margin, 20, width - margin, 150}, 25);
+        draw_glass_panel(context, {margin, top - 58, margin + list_width, height - 66}, 22);
+        draw_glass_panel(context, {margin * 2 + list_width, top - 58, width - margin, height - 66}, 22);
+        draw_glass_panel(context, {margin, height - 58, width - margin, height - 18}, 17);
+        HPEN separator = CreatePen(PS_SOLID, 1, RGB(58, 74, 101));
+        HGDIOBJ previous = SelectObject(context, separator);
+        MoveToEx(context, margin + 28, 105, nullptr); LineTo(context, width - margin - 28, 105);
+        SelectObject(context, previous); DeleteObject(separator);
+        // Small drawn audio mark: avoids external assets while giving the app a
+        // distinct hardware-control identity.
+        HPEN icon_pen = CreatePen(PS_SOLID, 3, blue); previous = SelectObject(context, icon_pen);
+        Arc(context, margin + 25, 36, margin + 51, 62, 0, 49, 0, 49);
+        Arc(context, margin + 30, 41, margin + 46, 57, 0, 49, 0, 49);
+        SelectObject(context, previous); DeleteObject(icon_pen);
     }
 
 private:
     void create_controls() {
-        background_brush_ = CreateSolidBrush(RGB(20, 24, 31));
-        status_brush_ = CreateSolidBrush(RGB(28, 37, 54));
+        background_brush_ = CreateSolidBrush(canvas);
+        status_brush_ = CreateSolidBrush(glass);
         title_ = label(L"SyncAudio", body_font_);
         SendMessageW(title_, WM_SETFONT, reinterpret_cast<WPARAM>(title_font_), TRUE);
-        subtitle_ = label(L"Choose your audio group, control real endpoint volume, and start sharing.", small_font_);
-        list_label_ = label(L"AVAILABLE AUDIO DEVICES", small_font_);
-        panel_title_ = label(L"DEVICE CONTROL", small_font_);
+        subtitle_ = label(L"Share system audio with your people - without touching Windows device settings by hand.", small_font_);
+        group_summary_ = label(L"0 / 5 selected", small_font_);
+        group_hint_ = label(L"1. Pick outputs     2. Tune volume     3. Start sharing", small_font_);
+        list_label_ = label(L"PICK OUTPUT DEVICES", small_font_);
+        panel_title_ = label(L"TUNE SELECTED DEVICE", small_font_);
         selected_name_ = label(L"Select a device", body_font_);
-        selected_detail_ = label(L"Only active, non-default endpoints can join the sharing group.", small_font_);
-        volume_label_ = label(L"Endpoint volume", small_font_);
-        route_note_ = label(L"Routing uses real WASAPI loopback streams. The current engine starts one isolated pipeline per selected device; hardware clock synchronization is still being developed.", small_font_);
+        selected_detail_ = label(L"Pick a row to see its details and adjust its device volume.", small_font_);
+        volume_label_ = label(L"Device volume", small_font_);
+        route_note_ = label(L"Sync preview\nYour selected devices play real routed audio. Advanced clock alignment is still being tuned per hardware.", small_font_);
         status_ = label(L"Starting...", small_font_);
 
         refresh_ = button(L"Refresh", id_refresh);
-        start_ = button(L"START AUDIO SHARING", id_start);
-        stop_ = button(L"Stop sharing", id_stop);
+        start_ = button(L"Start audio sharing", id_start);
+        stop_ = button(L"Stop audio sharing", id_stop);
         mute_ = button(L"Mute", id_mute);
         EnableWindow(stop_, FALSE);
         EnableWindow(mute_, FALSE);
@@ -236,6 +300,7 @@ private:
         ListView_SetBkColor(list_, RGB(27, 32, 41));
         ListView_SetTextBkColor(list_, RGB(27, 32, 41));
         ListView_SetTextColor(list_, RGB(231, 235, 242));
+        SetWindowTheme(list_, L"DarkMode_Explorer", nullptr);
         insert_column(0, L"Device", 250);
         insert_column(1, L"Status", 105);
         insert_column(2, L"Format", 130);
@@ -308,7 +373,7 @@ private:
         const int index = focused_index();
         if (index < 0 || index >= static_cast<int>(devices_.size())) {
             SetWindowTextW(selected_name_, L"Select a device");
-            SetWindowTextW(selected_detail_, L"Select a row to read or adjust that endpoint's real Windows volume.");
+            SetWindowTextW(selected_detail_, L"Click a device row to adjust its real Windows endpoint volume.");
             EnableWindow(volume_, FALSE);
             EnableWindow(mute_, FALSE);
             return;
@@ -375,6 +440,12 @@ private:
         set_status(L"Starting " + std::to_wstring(routes_.size()) + L" isolated audio route(s)...");
     }
 
+    void update_group_summary() {
+        const auto count = checked_indices().size();
+        const std::wstring text = std::to_wstring(count) + L" / 5 selected";
+        SetWindowTextW(group_summary_, text.c_str());
+    }
+
     void stop_routes() {
         for (auto& route : routes_) route->stop();
         routes_.clear();
@@ -384,13 +455,28 @@ private:
 
     void set_status(const std::wstring& text) { SetWindowTextW(status_, text.c_str()); }
 
+    static void draw_glass_panel(HDC context, RECT rectangle, int radius) {
+        HBRUSH body = CreateSolidBrush(glass);
+        HPEN outline = CreatePen(PS_SOLID, 1, glass_highlight);
+        HGDIOBJ old_body = SelectObject(context, body);
+        HGDIOBJ old_outline = SelectObject(context, outline);
+        RoundRect(context, rectangle.left, rectangle.top, rectangle.right, rectangle.bottom, radius, radius);
+        SelectObject(context, old_outline); SelectObject(context, old_body);
+        DeleteObject(outline); DeleteObject(body);
+        HPEN sheen = CreatePen(PS_SOLID, 1, RGB(70, 89, 121));
+        HGDIOBJ old_sheen = SelectObject(context, sheen);
+        MoveToEx(context, rectangle.left + radius, rectangle.top + 1, nullptr);
+        LineTo(context, rectangle.right - radius, rectangle.top + 1);
+        SelectObject(context, old_sheen); DeleteObject(sheen);
+    }
+
     [[nodiscard]] static std::wstring narrow_to_wide(const char* text) {
         if (text == nullptr) return L"Unknown error.";
         return std::wstring(text, text + std::strlen(text));
     }
 
     HWND window_{};
-    HWND title_{}; HWND subtitle_{}; HWND list_label_{}; HWND panel_title_{}; HWND selected_name_{};
+    HWND title_{}; HWND subtitle_{}; HWND group_summary_{}; HWND group_hint_{}; HWND list_label_{}; HWND panel_title_{}; HWND selected_name_{};
     HWND selected_detail_{}; HWND volume_label_{}; HWND route_note_{}; HWND status_{};
     HWND refresh_{}; HWND start_{}; HWND stop_{}; HWND mute_{}; HWND list_{}; HWND volume_{};
     HFONT title_font_{}; HFONT body_font_{}; HFONT small_font_{};
@@ -427,13 +513,22 @@ LRESULT CALLBACK window_procedure(HWND window, UINT message, WPARAM w_param, LPA
         if (dashboard) dashboard->draw_button(*reinterpret_cast<DRAWITEMSTRUCT*>(l_param));
         return TRUE;
     case WM_CTLCOLORSTATIC:
-        if (dashboard) return reinterpret_cast<LRESULT>(dashboard->control_brush(reinterpret_cast<HDC>(w_param), reinterpret_cast<HWND>(l_param) == GetDlgItem(window, 0)));
+        if (dashboard) return reinterpret_cast<LRESULT>(dashboard->control_brush(reinterpret_cast<HDC>(w_param)));
         break;
     case WM_ERASEBKGND:
         if (dashboard) {
             RECT rectangle{}; GetClientRect(window, &rectangle);
-            FillRect(reinterpret_cast<HDC>(w_param), &rectangle, dashboard->control_brush(reinterpret_cast<HDC>(w_param), false));
+            dashboard->paint(reinterpret_cast<HDC>(w_param));
             return 1;
+        }
+        break;
+    case WM_PAINT:
+        if (dashboard) {
+            PAINTSTRUCT paint{};
+            HDC context = BeginPaint(window, &paint);
+            dashboard->paint(context);
+            EndPaint(window, &paint);
+            return 0;
         }
         break;
     case WM_NCDESTROY:
@@ -458,6 +553,12 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int command_show) {
     RegisterClassW(&window_class);
     HWND window = CreateWindowExW(0, window_class_name, L"SyncAudio", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1120, 720, nullptr, nullptr, instance, nullptr);
+    // Windows 11 supplies the low-cost Mica backdrop; the custom client
+    // surfaces provide the readable glass treatment above it.
+    const BOOL dark = TRUE;
+    DwmSetWindowAttribute(window, 20, &dark, sizeof(dark)); // DWMWA_USE_IMMERSIVE_DARK_MODE
+    const int backdrop = 2; // DWMSBT_MAINWINDOW (Mica)
+    DwmSetWindowAttribute(window, 38, &backdrop, sizeof(backdrop)); // DWMWA_SYSTEMBACKDROP_TYPE
     ShowWindow(window, command_show);
     UpdateWindow(window);
     MSG message{};
