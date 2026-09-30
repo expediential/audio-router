@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -25,6 +26,24 @@ void print_usage() {
                << L"--mirror captures the default multimedia output using WASAPI loopback and\n"
                << L"mirrors it to one explicitly selected different endpoint. The current\n"
                << L"real path requires compatible Float32 shared-mode formats.\n";
+}
+
+[[nodiscard]] bool launched_directly_from_explorer() noexcept {
+    // A process launched by Explorer is the sole process attached to its new
+    // console. A normal PowerShell/cmd invocation shares that console with its
+    // parent, so commands and automated checks remain non-interactive.
+    DWORD process_ids[2]{};
+    return GetConsoleProcessList(process_ids, static_cast<DWORD>(std::size(process_ids))) == 1;
+}
+
+void wait_before_explorer_exit(bool should_wait) {
+    if (!should_wait) return;
+    const HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD console_mode = 0;
+    if (input == INVALID_HANDLE_VALUE || input == nullptr || !GetConsoleMode(input, &console_mode)) return;
+    std::wcout << L"\nPress Enter to close SyncAudio.\n";
+    std::wcin.ignore((std::numeric_limits<std::streamsize>::max)(), L'\n');
+    std::wcin.get();
 }
 
 int run_mirror(const std::wstring& endpoint_id, std::uint32_t seconds) {
@@ -59,37 +78,40 @@ int wmain(int argc, wchar_t* argv[]) {
     }
     SetConsoleCtrlHandler(on_console_control, TRUE);
 
+    const bool launched_directly = launched_directly_from_explorer();
+    int result = 0;
     try {
         if (argc >= 3 && std::wstring_view(argv[1]) == L"--mirror") {
             const auto seconds = argc >= 4 ? static_cast<std::uint32_t>(std::stoul(argv[3])) : 60U;
-            const auto result = run_mirror(argv[2], seconds);
-            CoUninitialize();
-            return result;
-        }
-        if (argc > 1 && std::wstring_view(argv[1]) != L"--list") {
+            result = run_mirror(argv[2], seconds);
+        } else if (argc > 1 && std::wstring_view(argv[1]) != L"--list") {
             print_usage();
-            CoUninitialize();
-            return 2;
+            result = 2;
+        } else {
+            const auto devices = syncaudio::enumerate_render_endpoints();
+            std::wcout << L"SyncAudio - detected Windows render endpoints\n\n";
+            if (devices.empty()) {
+                std::wcout << L"No render endpoints were returned by MMDevice. Check Windows Sound settings.\n";
+            }
+            for (const auto& device : devices) {
+                std::wcout << (device.is_default_multimedia ? L"* " : L"  ")
+                           << (device.name.empty() ? L"(unnamed endpoint)" : device.name)
+                           << L"\n    State: " << syncaudio::to_string(device.state)
+                           << L"\n    Shared mix format: " << device.sample_rate << L" Hz, "
+                           << device.channels << L" channel(s)"
+                           << L"\n    ID: " << device.id << L"\n";
+            }
+            std::wcout << L"\n* Default multimedia render endpoint\n";
+            if (launched_directly) {
+                std::wcout << L"\nTo mirror system audio, open PowerShell in this folder and run:\n"
+                           << L"  .\\SyncAudio.exe --mirror '<non-default endpoint ID>' 60\n";
+            }
         }
-        const auto devices = syncaudio::enumerate_render_endpoints();
-        std::wcout << L"SyncAudio - detected Windows render endpoints\n\n";
-        if (devices.empty()) {
-            std::wcout << L"No render endpoints were returned by MMDevice. Check Windows Sound settings.\n";
-        }
-        for (const auto& device : devices) {
-            std::wcout << (device.is_default_multimedia ? L"* " : L"  ")
-                       << (device.name.empty() ? L"(unnamed endpoint)" : device.name)
-                       << L"\n    State: " << syncaudio::to_string(device.state)
-                       << L"\n    Shared mix format: " << device.sample_rate << L" Hz, "
-                       << device.channels << L" channel(s)"
-                       << L"\n    ID: " << device.id << L"\n";
-        }
-        std::wcout << L"\n* Default multimedia render endpoint\n";
     } catch (const std::exception& error) {
         std::wcerr << L"SyncAudio error: " << error.what() << L"\n";
-        CoUninitialize();
-        return 1;
+        result = 1;
     }
+    wait_before_explorer_exit(launched_directly);
     CoUninitialize();
-    return 0;
+    return result;
 }
