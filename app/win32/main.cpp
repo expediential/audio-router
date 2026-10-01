@@ -28,6 +28,7 @@ constexpr int id_start = 102;
 constexpr int id_stop = 103;
 constexpr int id_volume = 104;
 constexpr int id_mute = 105;
+constexpr UINT_PTR device_refresh_timer = 1;
 
 constexpr COLORREF ink = RGB(238, 242, 250);
 constexpr COLORREF muted_ink = RGB(165, 177, 198);
@@ -136,9 +137,20 @@ public:
         MoveWindow(status_, margin + 24, height - 51, width - margin * 2 - 48, 25, TRUE);
     }
 
-    void refresh_devices() {
+    void refresh_devices(bool announce = true) {
         const auto keep = selected_ids();
         devices_ = syncaudio::enumerate_render_endpoints();
+        readiness_.clear();
+        readiness_.reserve(devices_.size());
+        for (const auto& device : devices_) {
+            if (device.is_default_multimedia) {
+                readiness_.push_back({false, {}, {}, L"This is the Windows system-audio source."});
+            } else if (device.state == syncaudio::EndpointState::active) {
+                readiness_.push_back(syncaudio::WasapiMirror::inspect_destination(device.id));
+            } else {
+                readiness_.push_back({false, {}, {}, L"Connect this device, then refresh."});
+            }
+        }
         ListView_DeleteAllItems(list_);
         for (int index = 0; index < static_cast<int>(devices_.size()); ++index) {
             const auto& device = devices_[index];
@@ -148,18 +160,20 @@ public:
             item.pszText = const_cast<LPWSTR>(device.name.empty() ? L"Unnamed endpoint" : device.name.c_str());
             item.lParam = index;
             ListView_InsertItem(list_, &item);
-            set_column(index, 1, syncaudio::to_string(device.state));
+            const wchar_t* state = device.is_default_multimedia ? L"System source" :
+                (readiness_[index].can_start ? L"Ready" : syncaudio::to_string(device.state));
+            set_column(index, 1, state);
             const std::wstring format = device.sample_rate == 0
                 ? L"Unavailable" : std::to_wstring(device.sample_rate) + L" Hz / " + std::to_wstring(device.channels) + L" ch";
             set_column(index, 2, format.c_str());
             if (std::find(keep.begin(), keep.end(), device.id) != keep.end() &&
-                device.state == syncaudio::EndpointState::active && !device.is_default_multimedia) {
+                readiness_[index].can_start) {
                 ListView_SetCheckState(list_, index, TRUE);
             }
         }
         update_selection_controls();
         update_group_summary();
-        set_status(L"Ready. Select up to five active destination devices.");
+        if (announce) set_status(L"Ready. Select up to five output devices marked Ready.");
     }
 
     void on_command(WORD control_id, WORD notification) {
@@ -361,10 +375,11 @@ private:
     void enforce_selection(int index) {
         if (index < 0 || index >= static_cast<int>(devices_.size()) || !ListView_GetCheckState(list_, index)) return;
         const auto& device = devices_[index];
-        const bool invalid = device.state != syncaudio::EndpointState::active || device.is_default_multimedia;
+        const bool invalid = device.state != syncaudio::EndpointState::active || device.is_default_multimedia ||
+                             !readiness_[index].can_start;
         if (invalid || checked_indices().size() > 5) {
             ListView_SetCheckState(list_, index, FALSE);
-            set_status(invalid ? L"Choose an active non-default endpoint. The default device is already the loopback source."
+            set_status(invalid ? readiness_[index].reason
                                : L"A sharing group can contain at most five output devices.");
         }
     }
@@ -380,7 +395,7 @@ private:
         }
         const auto& device = devices_[index];
         SetWindowTextW(selected_name_, device.name.empty() ? L"Unnamed endpoint" : device.name.c_str());
-        const std::wstring description = std::wstring(syncaudio::to_string(device.state)) + L"  |  " +
+        const std::wstring description = readiness_[index].can_start ? L"Ready to share  |  " : readiness_[index].reason + L"  |  " +
             (device.sample_rate ? std::to_wstring(device.sample_rate) + L" Hz / " + std::to_wstring(device.channels) + L" channels"
                                 : L"No active shared-mode format");
         SetWindowTextW(selected_detail_, description.c_str());
@@ -431,13 +446,22 @@ private:
         stop_routes();
         for (const int index : selected) {
             const auto& device = devices_[index];
+            const auto now_ready = syncaudio::WasapiMirror::inspect_destination(device.id);
+            if (!now_ready.can_start) {
+                set_status(device.name + L" is no longer ready: " + now_ready.reason);
+                continue;
+            }
             auto worker = std::make_unique<RouteWorker>(window_, device.id, device.name);
             worker->start();
             routes_.push_back(std::move(worker));
         }
+        if (routes_.empty()) {
+            set_status(L"No selected device could be started. Refresh the device list and reconnect it if needed.");
+            return;
+        }
         EnableWindow(start_, FALSE);
         EnableWindow(stop_, TRUE);
-        set_status(L"Starting " + std::to_wstring(routes_.size()) + L" isolated audio route(s)...");
+        set_status(L"Starting " + std::to_wstring(routes_.size()) + L" real audio route(s)...");
     }
 
     void update_group_summary() {
@@ -482,6 +506,7 @@ private:
     HFONT title_font_{}; HFONT body_font_{}; HFONT small_font_{};
     HBRUSH background_brush_{}; HBRUSH status_brush_{};
     std::vector<syncaudio::DeviceDescriptor> devices_;
+    std::vector<syncaudio::RouteReadiness> readiness_;
     std::vector<std::unique_ptr<RouteWorker>> routes_;
 };
 
@@ -495,6 +520,12 @@ LRESULT CALLBACK window_procedure(HWND window, UINT message, WPARAM w_param, LPA
         return TRUE;
     case WM_SIZE:
         if (dashboard) dashboard->resize(LOWORD(l_param), HIWORD(l_param));
+        return 0;
+    case WM_TIMER:
+        if (dashboard && w_param == device_refresh_timer) dashboard->refresh_devices(false);
+        return 0;
+    case WM_GETMINMAXINFO:
+        reinterpret_cast<MINMAXINFO*>(l_param)->ptMinTrackSize = {980, 640};
         return 0;
     case WM_COMMAND:
         if (dashboard) dashboard->on_command(LOWORD(w_param), HIWORD(w_param));
@@ -542,6 +573,9 @@ LRESULT CALLBACK window_procedure(HWND window, UINT message, WPARAM w_param, LPA
 } // namespace
 
 int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int command_show) {
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(com)) return 1;
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES};
     InitCommonControlsEx(&controls);
     WNDCLASSW window_class{};
@@ -559,6 +593,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int command_show) {
     DwmSetWindowAttribute(window, 20, &dark, sizeof(dark)); // DWMWA_USE_IMMERSIVE_DARK_MODE
     const int backdrop = 2; // DWMSBT_MAINWINDOW (Mica)
     DwmSetWindowAttribute(window, 38, &backdrop, sizeof(backdrop)); // DWMWA_SYSTEMBACKDROP_TYPE
+    SetTimer(window, device_refresh_timer, 4'000, nullptr);
     ShowWindow(window, command_show);
     UpdateWindow(window);
     MSG message{};
@@ -566,5 +601,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int command_show) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
+    KillTimer(window, device_refresh_timer);
+    CoUninitialize();
     return static_cast<int>(message.wParam);
 }

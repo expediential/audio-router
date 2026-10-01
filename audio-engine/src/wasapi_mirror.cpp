@@ -254,4 +254,27 @@ MirrorStatistics WasapiMirror::statistics() const noexcept {
             stats.capture_overflow_frames.load(std::memory_order_relaxed), stats.render_underrun_frames.load(std::memory_order_relaxed)};
 }
 
+RouteReadiness WasapiMirror::inspect_destination(const std::wstring& destination_endpoint_id) {
+    RouteReadiness readiness;
+    try {
+        WasapiMirror mirror(destination_endpoint_id);
+        mirror.prepare();
+        readiness.can_start = true;
+        readiness.source = mirror.source_format();
+        readiness.destination = mirror.destination_format();
+        readiness.reason = L"Ready to share";
+    } catch (const std::exception& error) {
+        const int required = MultiByteToWideChar(CP_UTF8, 0, error.what(), -1, nullptr, 0);
+        if (required > 1) {
+            std::wstring converted(static_cast<std::size_t>(required), L'\0');
+            MultiByteToWideChar(CP_UTF8, 0, error.what(), -1, converted.data(), required);
+            converted.pop_back();
+            readiness.reason = std::move(converted);
+        } else {
+            readiness.reason = L"Windows could not prepare this output.";
+        }
+    }
+    return readiness;
+}
+
 } // namespace syncaudio

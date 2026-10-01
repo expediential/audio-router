@@ -30,6 +30,13 @@ struct MirrorStatistics {
     std::uint64_t render_underrun_frames{0};
 };
 
+struct RouteReadiness {
+    bool can_start{false};
+    FloatStreamFormat source{};
+    FloatStreamFormat destination{};
+    std::wstring reason;
+};
+
 // A real, one-destination WASAPI mirror. It captures the default multimedia
 // render endpoint via shared-mode loopback and renders that shared mix to an
 // explicitly selected *different* endpoint. Both endpoints must currently use
@@ -54,10 +61,15 @@ public:
     [[nodiscard]] FloatStreamFormat destination_format() const noexcept;
     [[nodiscard]] MirrorStatistics statistics() const noexcept;
 
+    // Performs the same device/format checks as start() without starting an
+    // audio stream. Dashboard selection uses this so its Ready badge means a
+    // real route can currently be initialized, not merely that a device name
+    // happened to be cached by Windows.
+    [[nodiscard]] static RouteReadiness inspect_destination(const std::wstring& destination_endpoint_id);
+
 private:
     class Implementation;
     std::unique_ptr<Implementation> implementation_;
 };
 
 } // namespace syncaudio
-
